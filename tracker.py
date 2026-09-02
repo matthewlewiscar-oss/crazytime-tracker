@@ -7,9 +7,10 @@ import requests
 
 def scrape_tracksino_table():
     csv_file = "crazytime_master_history.csv"
-    url = "https://tracksino.com"
+    url = "https://www.tracksino.com/crazytime"
     headers_csv = ["Time", "Dealer", "Multiplier", "Result", "Total_Winners", "Total_Payout"]
     
+    # Initialize the spreadsheet template layout file cleanly if missing
     file_exists = os.path.exists(csv_file) and os.path.getsize(csv_file) > 0
     if not file_exists:
         with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
@@ -33,40 +34,61 @@ def scrape_tracksino_table():
             
         html = response.text
         spins_data = []
+        soup = BeautifulSoup(html, 'html.parser')
         
-        # Look for the hidden raw data block inside the page script layout tags
-        json_match = re.search(r'id="spin-history-data"[^>]*>([\s\S]*?)</script>', html)
-        
-        if json_match:
-            try:
-                raw_data = json.loads(json_match.group(1).strip())
-                records = raw_data if isinstance(raw_data, list) else raw_data.get('data', [])
-                
-                for item in records:
-                    # DUAL-MAPPING FIX: Look for alternate backend variable key names automatically
-                    time_val = item.get('time') or item.get('created_at') or item.get('watched_at') or ''
-                    dealer_val = item.get('dealer_name') or item.get('dealer') or item.get('dealer_id') or 'Unknown'
-                    mult_val = item.get('multiplier') or item.get('slot_multiplier') or item.get('top_slot_multiplier') or '1x'
-                    res_val = item.get('result') or item.get('wheel_result') or item.get('outcome') or ''
-                    win_val = item.get('total_winners') or item.get('winners') or item.get('winner_count') or '0'
-                    pay_val = item.get('total_payout') or item.get('payout') or item.get('amount') or '$0'
+        # FIX: Find ALL script blocks and look for raw spin data objects wherever they are hidden
+        for script in soup.find_all('script'):
+            if script.string and ("dealer_name" in script.string or "wheel_result" in script.string or "spin-history" in script.string.lower()):
+                try:
+                    # Clean up the JavaScript variable wrapper to isolate raw data text text
+                    clean_text = script.string.strip()
+                    if "window.__INITIAL_STATE__ =" in clean_text:
+                        clean_text = clean_text.split("window.__INITIAL_STATE__ =", 1)[1].rsplit(";", 1)[0].strip()
+                    elif "id=" in str(script):
+                        clean_text = clean_text
+                        
+                    raw_json = json.loads(clean_text)
                     
-                    if time_val and res_val:
-                        spins_data.append({
-                            "Time": str(time_val),
-                            "Dealer": str(dealer_val),
-                            "Multiplier": str(mult_val),
-                            "Result": str(res_val),
-                            "Total_Winners": str(win_val),
-                            "Total_Payout": str(pay_val)
-                        })
-            except Exception as json_err:
-                print(f"⚠️ JSON parsing check skipped: {json_err}")
+                    # Dig through any inner nested layer names dynamically
+                    records = []
+                    if isinstance(raw_json, list):
+                        records = raw_json
+                    elif isinstance(raw_json, dict):
+                        for k, v in raw_json.items():
+                            if isinstance(v, list):
+                                records = v
+                                break
+                            elif isinstance(v, dict) and "data" in v:
+                                records = v["data"]
+                                break
+                        if not records:
+                            records = raw_json.get('data', raw_json.get('spins', raw_json.get('history', [])))
+                    
+                    for item in records:
+                        if isinstance(item, dict):
+                            # Map out alternative dictionary key variants used by regional endpoints
+                            time_val = item.get('time') or item.get('created_at') or item.get('watched_at') or item.get('date') or ''
+                            dealer_val = item.get('dealer_name') or item.get('dealer') or item.get('dealer_id') or 'Unknown'
+                            mult_val = item.get('multiplier') or item.get('slot_multiplier') or item.get('top_slot_multiplier') or '1x'
+                            res_val = item.get('result') or item.get('wheel_result') or item.get('outcome') or ''
+                            win_val = item.get('total_winners') or item.get('winners') or item.get('winner_count') or '0'
+                            pay_val = item.get('total_payout') or item.get('payout') or item.get('amount') or '$0'
+                            
+                            if time_val and res_val:
+                                spins_data.append({
+                                    "Time": str(time_val),
+                                    "Dealer": str(dealer_val),
+                                    "Multiplier": str(mult_val),
+                                    "Result": str(res_val),
+                                    "Total_Winners": str(win_val),
+                                    "Total_Payout": str(pay_val)
+                                })
+                except Exception as json_err:
+                    continue
 
-        # Fallback table parser engine if the backend script is missing
+        # FALLBACK TABLE SELECTOR: Scrapes HTML grid rows if JavaScript strings are absent
         if not spins_data:
-            print("🔄 JSON block absent. Running layout fallback parser...")
-            soup = BeautifulSoup(html, 'html.parser')
+            print("🔄 Text strings missing. Running table fallback layout check...")
             for table in soup.find_all('table'):
                 table_text = table.text.lower()
                 if "dealer" in table_text or "history" in table_text or "payout" in table_text:
@@ -87,6 +109,7 @@ def scrape_tracksino_table():
             print("❌ No matching spin rows could be parsed from the layout structure.")
             return
 
+        # Deduplication matching row check filters
         existing_timestamps = set()
         with open(csv_file, mode="r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
