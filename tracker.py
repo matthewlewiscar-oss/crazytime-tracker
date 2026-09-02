@@ -7,11 +7,9 @@ import requests
 
 def scrape_tracksino_table():
     csv_file = "crazytime_master_history.csv"
-    debug_file = "debug_view.html"
-    url = "https://www.tracksino.com/crazytime"
+    url = "https://tracksino.com"
     headers_csv = ["Time", "Dealer", "Multiplier", "Result", "Total_Winners", "Total_Payout"]
     
-    # Initialize the template file layout if missing
     file_exists = os.path.exists(csv_file) and os.path.getsize(csv_file) > 0
     if not file_exists:
         with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
@@ -25,7 +23,7 @@ def scrape_tracksino_table():
         "Accept-Language": "en-US,en;q=0.9"
     }
     
-    print("🚀 Connecting to Tracksino cloud interface...")
+    print("🚀 Extracting dataset from deep background scripts...")
     
     try:
         response = requests.get(url, headers=headers, timeout=20)
@@ -36,42 +34,61 @@ def scrape_tracksino_table():
         html = response.text
         spins_data = []
         
-        # 1. Broadest text-search strategy: Hunt for any mention of common dealer/game variables
-        soup = BeautifulSoup(html, 'html.parser')
-        for table in soup.find_all('table'):
-            table_text = table.text.lower()
-            if "dealer" in table_text or "history" in table_text or "payout" in table_text:
-                for row in table.find_all('tr')[1:]:
-                    cols = row.find_all(['td', 'th'])
-                    if len(cols) >= 4:
-                        texts = [c.text.strip() for c in cols]
+        # FIX: Scan the massive 177KB file for raw JSON string dumps matching game keys
+        # This completely ignores all the messy SVG graphic layout rows completely!
+        matches = re.findall(r'(\{[\s\S]*?\})', html)
+        for segment in matches:
+            if "dealer_name" in segment or "wheel_result" in segment or "slot_multiplier" in segment:
+                try:
+                    # Clean brackets and isolate matching dictionary entries
+                    clean_segment = segment.strip()
+                    if not clean_segment.startswith('{'):
+                        continue
+                    item = json.loads(clean_segment)
+                    
+                    time_val = item.get('time') or item.get('created_at') or item.get('watched_at') or item.get('date') or ''
+                    dealer_val = item.get('dealer_name') or item.get('dealer') or 'Unknown'
+                    mult_val = item.get('multiplier') or item.get('slot_multiplier') or '1x'
+                    res_val = item.get('result') or item.get('wheel_result') or item.get('outcome') or ''
+                    win_val = item.get('total_winners') or item.get('winners') or '0'
+                    pay_val = item.get('total_payout') or item.get('payout') or '$0'
+                    
+                    if time_val and res_val and len(str(res_val)) < 30:
                         spins_data.append({
-                            "Time": texts[0] if len(texts) > 0 else "N/A",
-                            "Dealer": texts[1] if len(texts) > 1 else "N/A",
-                            "Multiplier": texts[2] if len(texts) > 2 else "1x",
-                            "Result": texts[3] if len(texts) > 3 else "N/A",
-                            "Total_Winners": texts[4] if len(texts) > 4 else "0",
-                            "Total_Payout": texts[5] if len(texts) > 5 else "$0"
+                            "Time": str(time_val),
+                            "Dealer": str(dealer_val),
+                            "Multiplier": str(mult_val),
+                            "Result": str(res_val),
+                            "Total_Winners": str(win_val),
+                            "Total_Payout": str(pay_val)
                         })
-                break
+                except:
+                    continue
 
-        # 2. DIAGNOSTIC SAFEGUARD: If no data rows can be found, save the raw page into the repository
+        # ULTIMATE REGULAR EXPRESSION FALLBACK: 
+        # If the web app maps keys inside an complex custom list format, scan raw quotes directly
         if not spins_data:
-            print(f"⚠️ No rows parsed. Saving raw cloud source layout to '{debug_file}' for audit...")
-            with open(debug_file, mode="w", encoding="utf-8") as df:
-                df.write(html)
-            
-            # Create a mock entry to force Git to push the debug file updates
-            spins_data.append({
-                "Time": "DIAGNOSTIC_RUN",
-                "Dealer": "CHECK_DEBUG_HTML_FILE",
-                "Multiplier": "N/A",
-                "Result": "NO_DATA_FOUND",
-                "Total_Winners": "0",
-                "Total_Payout": "$0"
-            })
+            print("🔄 Running pattern scanner on raw text blocks...")
+            # Capture strings matching typical round logs: e.g., "14:35", "DealerName", "Crazy Time"
+            raw_spins = re.findall(r'("time":"[^"]+","dealer_name":"[^"]+","slot_multiplier":"[^"]+","wheel_result":"[^"]+")', html)
+            for raw_spin in raw_spins:
+                try:
+                    item = json.loads("{" + raw_spin + "}")
+                    spins_data.append({
+                        "Time": item.get('time', ''),
+                        "Dealer": item.get('dealer_name', 'Unknown'),
+                        "Multiplier": item.get('slot_multiplier', '1x'),
+                        "Result": item.get('wheel_result', ''),
+                        "Total_Winners": "0",
+                        "Total_Payout": "$0"
+                    })
+                except:
+                    continue
 
-        # Standard file writing and save module
+        if not spins_data:
+            print("❌ No matching spin rows could be unsealed from the layout.")
+            return
+
         existing_timestamps = set()
         with open(csv_file, mode="r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
@@ -85,8 +102,10 @@ def scrape_tracksino_table():
             with open(csv_file, mode="a", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=headers_csv)
                 writer.writerows(new_spins)
-            print(f"🎉 Process completed successfully.")
-            
+            print(f"🎉 Success! Extracted and saved {len(new_spins)} new unique live spins.")
+        else:
+            print("✅ No new spins discovered. Database spreadsheet remains fully up to date.")
+
     except Exception as e:
         print(f"❌ Tracking system exception error: {e}")
 
