@@ -9,7 +9,6 @@ def scrape_tracksino_table():
     url = "https://www.tracksino.com/crazytime"
     headers_csv = ["Time", "Dealer", "Multiplier", "Result", "Total_Winners", "Total_Payout"]
     
-    # Initialize the spreadsheet layout file cleanly if missing
     file_exists = os.path.exists(csv_file) and os.path.getsize(csv_file) > 0
     if not file_exists:
         with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
@@ -30,24 +29,30 @@ def scrape_tracksino_table():
             print(f"❌ Connection failed: {response.status_code}")
             return
             
-        print("✅ Connected successfully! Parsing visual table rows...")
+        print("✅ Connected successfully! Finding the Spin History table...")
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Target the primary table object layout container explicitly
-        table = soup.find('table')
-        if not table:
-            print("❌ Could not isolate the explicit table grid container.")
+        # FIX: Find ALL tables and pinpoint the one that actually contains the historical spin records
+        target_table = None
+        for table in soup.find_all('table'):
+            table_text = table.text.lower()
+            # The genuine log table always contains words like "dealer" or "payout" in its header
+            if "dealer" in table_text or "history" in table_text or "payout" in table_text:
+                target_table = table
+                break
+                
+        if not target_table:
+            print("❌ Could not isolate the explicit Spin History table container.")
             return
             
         spins_data = []
-        rows = table.find_all('tr')
+        rows = target_table.find_all('tr')
         
-        for row in rows[1:]:  # Skip index 0 (table header words)
+        for row in rows[1:]:
             cols = row.find_all('td')
             if not cols or len(cols) < 6:
                 continue
                 
-            # Safely map columns by exact table cell position indexes
             row_data = {
                 "Time": cols[0].text.strip(),
                 "Dealer": cols[1].text.strip(),
@@ -59,10 +64,9 @@ def scrape_tracksino_table():
             spins_data.append(row_data)
 
         if not spins_data:
-            print("❌ No text rows were harvested inside the table object.")
+            print("❌ No text rows were harvested inside the targeted table.")
             return
 
-        # Read existing timestamps to block duplicate entries
         existing_timestamps = set()
         with open(csv_file, mode="r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
