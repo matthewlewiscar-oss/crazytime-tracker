@@ -8,7 +8,6 @@ def scrape_tracksino_table():
     csv_file = "crazytime_master_history.csv"
     url = "https://tracksino.com"
     
-    # Standard desktop user signature
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
@@ -35,16 +34,17 @@ def scrape_tracksino_table():
         
         for row in rows[1:]:
             cols = row.find_all(['td', 'th'])
-            if not cols:
+            # FIX: Ensure we only pull rows that actually have all 6 data blocks filled out
+            if not cols or len(cols) < 6:
                 continue
                 
             row_data = {
-                "Time": cols[0].text.strip() if len(cols) > 0 else "",
-                "Dealer": cols[1].text.strip() if len(cols) > 1 else "",
-                "Multiplier": cols[2].text.strip() if len(cols) > 2 else "",
-                "Result": cols[3].text.strip() if len(cols) > 3 else "",
-                "Total_Winners": cols[4].text.strip() if len(cols) > 4 else "",
-                "Total_Payout": cols[5].text.strip() if len(cols) > 5 else ""
+                "Time": cols[0].text.strip(),
+                "Dealer": cols[1].text.strip(),
+                "Multiplier": cols[2].text.strip(),
+                "Result": cols[3].text.strip(),
+                "Total_Winners": cols[4].text.strip(),
+                "Total_Payout": cols[5].text.strip()
             }
             spins_data.append(row_data)
 
@@ -64,12 +64,18 @@ def scrape_tracksino_table():
 
         new_spins = [spin for spin in spins_data if spin["Time"] not in existing_timestamps]
 
+        # FIX: Force creation of a blank file with headers if it's completely missing
+        if not file_exists:
+            headers_csv = ["Time", "Dealer", "Multiplier", "Result", "Total_Winners", "Total_Payout"]
+            with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=headers_csv)
+                writer.writeheader()
+            file_exists = True
+
         if new_spins:
             headers_csv = ["Time", "Dealer", "Multiplier", "Result", "Total_Winners", "Total_Payout"]
             with open(csv_file, mode="a", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=headers_csv)
-                if not file_exists:
-                    writer.writeheader()
                 writer.writerows(new_spins)
             print(f"🎉 Success! Extracted and saved {len(new_spins)} new unique live spins.")
         else:
