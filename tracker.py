@@ -56,7 +56,7 @@ def scrape_crazytime_history():
     new_spins = [spin for spin in all_spins if str(spin.get('id', '')) not in existing_ids]
     
     if new_spins:
-        # FIXED LINE: Grabs the keys from the very first data entry dictionary safely
+        # FIXED: Safely grabs keys from the dictionary at index 0
         headers_csv = list(new_spins[0].keys())
         
         with open(csv_file, mode="a", newline="", encoding="utf-8") as f:
