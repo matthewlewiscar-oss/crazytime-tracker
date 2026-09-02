@@ -1,6 +1,7 @@
 import os
 import csv
-import time
+import re
+import json
 from bs4 import BeautifulSoup
 import requests
 
@@ -9,7 +10,7 @@ def scrape_tracksino_table():
     url = "https://www.tracksino.com/crazytime"
     headers_csv = ["Time", "Dealer", "Multiplier", "Result", "Total_Winners", "Total_Payout"]
     
-    # Initialize the tracking file layout explicitly if it is missing or empty
+    # Initialize the spreadsheet template if it is empty
     file_exists = os.path.exists(csv_file) and os.path.getsize(csv_file) > 0
     if not file_exists:
         with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
@@ -19,53 +20,68 @@ def scrape_tracksino_table():
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9"
     }
     
-    print("🚀 Connecting directly to Tracksino web interface...")
+    print("🚀 Connecting to Tracksino cloud interface...")
     
     try:
         response = requests.get(url, headers=headers, timeout=20)
         if response.status_code != 200:
-            print(f"❌ Connection failed: {response.status_code}")
+            print(f"❌ Connection closed: {response.status_code}")
             return
             
-        print("✅ Connected successfully! Finding the Spin History table...")
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        target_table = None
-        for table in soup.find_all('table'):
-            table_text = table.text.lower()
-            if "dealer" in table_text or "history" in table_text or "payout" in table_text:
-                target_table = table
-                break
-                
-        if not target_table:
-            print("❌ Could not isolate the explicit Spin History table container.")
-            return
-            
+        html = response.text
         spins_data = []
-        rows = target_table.find_all('tr')
         
-        for row in rows[1:]:
-            cols = row.find_all('td')
-            if not cols or len(cols) < 6:
-                continue
+        # FIX: Look for raw pre-rendered JSON string arrays embedded inside the page scripts
+        # This completely skips hunting for unstable HTML <table> tags
+        json_match = re.search(r'id="spin-history-data"[^>]*>([\s\S]*?)</script>', html)
+        
+        if json_match:
+            try:
+                raw_data = json.loads(json_match.group(1).strip())
+                # Normalize data array lists if kept inside an inner key dictionary wrapper
+                records = raw_data if isinstance(raw_data, list) else raw_data.get('data', [])
                 
-            row_data = {
-                "Time": cols[0].text.strip(),
-                "Dealer": cols[1].text.strip(),
-                "Multiplier": cols[2].text.strip(),
-                "Result": cols[3].text.strip(),
-                "Total_Winners": cols[4].text.strip(),
-                "Total_Payout": cols[5].text.strip()
-            }
-            spins_data.append(row_data)
+                for item in records:
+                    spins_data.append({
+                        "Time": str(item.get('time', item.get('created_at', ''))),
+                        "Dealer": str(item.get('dealer_name', item.get('dealer', ''))),
+                        "Multiplier": str(item.get('multiplier', item.get('slot_multiplier', '1x'))),
+                        "Result": str(item.get('result', item.get('wheel_result', ''))),
+                        "Total_Winners": str(item.get('total_winners', item.get('winners', '0'))),
+                        "Total_Payout": str(item.get('total_payout', item.get('payout', '$0')))
+                    })
+            except Exception as json_err:
+                print(f"⚠️ JSON tracking variant skipped: {json_err}")
+
+        # FALLBACK BACKUP: If the script cannot locate text blocks, harvest standard cell components cleanly
+        if not spins_data:
+            print("🔄 JSON container absent. Initiating structural layout scan fallback...")
+            soup = BeautifulSoup(html, 'html.parser')
+            for table in soup.find_all('table'):
+                table_text = table.text.lower()
+                if "dealer" in table_text or "history" in table_text or "payout" in table_text:
+                    for row in table.find_all('tr')[1:]:
+                        cols = row.find_all(['td', 'th'])
+                        if len(cols) >= 6:
+                            spins_data.append({
+                                "Time": cols[0].text.strip(),
+                                "Dealer": cols[1].text.strip(),
+                                "Multiplier": cols[2].text.strip(),
+                                "Result": cols[3].text.strip(),
+                                "Total_Winners": cols[4].text.strip(),
+                                "Total_Payout": cols[5].text.strip()
+                            })
+                    break
 
         if not spins_data:
-            print("❌ No text rows were harvested inside the targeted table.")
+            print("❌ No matching spin rows could be parsed from the layout structure.")
             return
 
+        # Deduplication layout matching processing
         existing_timestamps = set()
         with open(csv_file, mode="r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
@@ -81,10 +97,10 @@ def scrape_tracksino_table():
                 writer.writerows(new_spins)
             print(f"🎉 Success! Extracted and saved {len(new_spins)} new unique live spins.")
         else:
-            print("✅ No new spins discovered. Database spreadsheet remains fully up to date.")
+            print("✅ No new spins discovered. Database remains fully up to date.")
 
     except Exception as e:
-        print(f"❌ Tracking error: {e}")
+        print(f"❌ Tracking system exception error: {e}")
 
 if __name__ == "__main__":
     scrape_tracksino_table()
