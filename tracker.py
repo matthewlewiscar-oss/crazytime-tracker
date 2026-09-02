@@ -2,15 +2,16 @@ import os
 import csv
 import re
 import json
+import js2py
 from bs4 import BeautifulSoup
 import requests
 
 def scrape_tracksino_table():
     csv_file = "crazytime_master_history.csv"
-    url = "https://www.tracksino.com/crazytime"
+    url = "https://tracksino.com"
     headers_csv = ["Time", "Dealer", "Multiplier", "Result", "Total_Winners", "Total_Payout"]
     
-    # Initialize the spreadsheet template layout file cleanly if missing
+    # Initialize the tracking file layout explicitly if it is missing
     file_exists = os.path.exists(csv_file) and os.path.getsize(csv_file) > 0
     if not file_exists:
         with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
@@ -29,66 +30,67 @@ def scrape_tracksino_table():
     try:
         response = requests.get(url, headers=headers, timeout=20)
         if response.status_code != 200:
-            print(f"❌ Connection closed: {response.status_code}")
+            print(f"❌ Connection failed: {response.status_code}")
             return
             
         html = response.text
         spins_data = []
         soup = BeautifulSoup(html, 'html.parser')
         
-        # FIX: Find ALL script blocks and look for raw spin data objects wherever they are hidden
+        # ADVANCED FIX: Locate the hidden Nuxt/Next JavaScript state pipeline variables
+        js_data_text = None
         for script in soup.find_all('script'):
-            if script.string and ("dealer_name" in script.string or "wheel_result" in script.string or "spin-history" in script.string.lower()):
-                try:
-                    # Clean up the JavaScript variable wrapper to isolate raw data text text
-                    clean_text = script.string.strip()
-                    if "window.__INITIAL_STATE__ =" in clean_text:
-                        clean_text = clean_text.split("window.__INITIAL_STATE__ =", 1)[1].rsplit(";", 1)[0].strip()
-                    elif "id=" in str(script):
-                        clean_text = clean_text
-                        
-                    raw_json = json.loads(clean_text)
+            script_content = script.string or ""
+            if "window.__INITIAL_STATE__" in script_content or "spinHistory" in script_content:
+                js_data_text = script_content
+                break
+        
+        if js_data_text:
+            try:
+                print("🧠 Executing embedded JavaScript context to decode spin array...")
+                # Isolate the exact assignment text block cleanly
+                js_context = js_data_text.strip()
+                if "window.__INITIAL_STATE__ =" in js_context:
+                    # Execute the JavaScript string block inside Python to build a matching data object
+                    context = js2py.EvalJs()
+                    context.execute(js_context)
+                    initial_state = context.window.__INITIAL_STATE__.to_dict()
                     
-                    # Dig through any inner nested layer names dynamically
-                    records = []
-                    if isinstance(raw_json, list):
-                        records = raw_json
-                    elif isinstance(raw_json, dict):
-                        for k, v in raw_json.items():
-                            if isinstance(v, list):
-                                records = v
-                                break
-                            elif isinstance(v, dict) and "data" in v:
-                                records = v["data"]
-                                break
-                        if not records:
-                            records = raw_json.get('data', raw_json.get('spins', raw_json.get('history', [])))
+                    # Dig through data dictionaries for matching lists recursively
+                    def find_spin_list(obj):
+                        if isinstance(obj, list) and len(obj) > 0 and isinstance(obj[0], dict) and ('result' in obj[0] or 'dealer' in obj[0]):
+                            return obj
+                        if isinstance(obj, dict):
+                            for k, v in obj.items():
+                                res = find_spin_list(v)
+                                if res: return res
+                        return None
+                    
+                    records = find_spin_list(initial_state) or []
                     
                     for item in records:
-                        if isinstance(item, dict):
-                            # Map out alternative dictionary key variants used by regional endpoints
-                            time_val = item.get('time') or item.get('created_at') or item.get('watched_at') or item.get('date') or ''
-                            dealer_val = item.get('dealer_name') or item.get('dealer') or item.get('dealer_id') or 'Unknown'
-                            mult_val = item.get('multiplier') or item.get('slot_multiplier') or item.get('top_slot_multiplier') or '1x'
-                            res_val = item.get('result') or item.get('wheel_result') or item.get('outcome') or ''
-                            win_val = item.get('total_winners') or item.get('winners') or item.get('winner_count') or '0'
-                            pay_val = item.get('total_payout') or item.get('payout') or item.get('amount') or '$0'
-                            
-                            if time_val and res_val:
-                                spins_data.append({
-                                    "Time": str(time_val),
-                                    "Dealer": str(dealer_val),
-                                    "Multiplier": str(mult_val),
-                                    "Result": str(res_val),
-                                    "Total_Winners": str(win_val),
-                                    "Total_Payout": str(pay_val)
-                                })
-                except Exception as json_err:
-                    continue
+                        time_val = item.get('time') or item.get('created_at') or item.get('watched_at') or item.get('date') or ''
+                        dealer_val = item.get('dealer_name') or item.get('dealer') or 'Unknown'
+                        mult_val = item.get('multiplier') or item.get('slot_multiplier') or '1x'
+                        res_val = item.get('result') or item.get('wheel_result') or item.get('outcome') or ''
+                        win_val = item.get('total_winners') or item.get('winners') or '0'
+                        pay_val = item.get('total_payout') or item.get('payout') or '$0'
+                        
+                        if time_val and res_val:
+                            spins_data.append({
+                                "Time": str(time_val),
+                                "Dealer": str(dealer_val),
+                                "Multiplier": str(mult_val),
+                                "Result": str(res_val),
+                                "Total_Winners": str(win_val),
+                                "Total_Payout": str(pay_val)
+                            })
+            except Exception as js_err:
+                print(f"⚠️ JavaScript decoder bypass skipped: {js_err}")
 
-        # FALLBACK TABLE SELECTOR: Scrapes HTML grid rows if JavaScript strings are absent
+        # HTML GRID FALLBACK: Pulls standard HTML table elements if JavaScript state variables shift
         if not spins_data:
-            print("🔄 Text strings missing. Running table fallback layout check...")
+            print("🔄 JavaScript variables absent. Running plain table scan...")
             for table in soup.find_all('table'):
                 table_text = table.text.lower()
                 if "dealer" in table_text or "history" in table_text or "payout" in table_text:
@@ -109,7 +111,7 @@ def scrape_tracksino_table():
             print("❌ No matching spin rows could be parsed from the layout structure.")
             return
 
-        # Deduplication matching row check filters
+        # Deduplication filtering matching logic
         existing_timestamps = set()
         with open(csv_file, mode="r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
