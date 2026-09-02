@@ -2,16 +2,16 @@ import os
 import csv
 import re
 import json
-import js2py
 from bs4 import BeautifulSoup
 import requests
 
 def scrape_tracksino_table():
     csv_file = "crazytime_master_history.csv"
-    url = "https://tracksino.com"
+    debug_file = "debug_view.html"
+    url = "https://www.tracksino.com/crazytime"
     headers_csv = ["Time", "Dealer", "Multiplier", "Result", "Total_Winners", "Total_Payout"]
     
-    # Initialize the tracking file layout explicitly if it is missing
+    # Initialize the template file layout if missing
     file_exists = os.path.exists(csv_file) and os.path.getsize(csv_file) > 0
     if not file_exists:
         with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
@@ -35,83 +35,43 @@ def scrape_tracksino_table():
             
         html = response.text
         spins_data = []
+        
+        # 1. Broadest text-search strategy: Hunt for any mention of common dealer/game variables
         soup = BeautifulSoup(html, 'html.parser')
-        
-        # ADVANCED FIX: Locate the hidden Nuxt/Next JavaScript state pipeline variables
-        js_data_text = None
-        for script in soup.find_all('script'):
-            script_content = script.string or ""
-            if "window.__INITIAL_STATE__" in script_content or "spinHistory" in script_content:
-                js_data_text = script_content
+        for table in soup.find_all('table'):
+            table_text = table.text.lower()
+            if "dealer" in table_text or "history" in table_text or "payout" in table_text:
+                for row in table.find_all('tr')[1:]:
+                    cols = row.find_all(['td', 'th'])
+                    if len(cols) >= 4:
+                        texts = [c.text.strip() for c in cols]
+                        spins_data.append({
+                            "Time": texts[0] if len(texts) > 0 else "N/A",
+                            "Dealer": texts[1] if len(texts) > 1 else "N/A",
+                            "Multiplier": texts[2] if len(texts) > 2 else "1x",
+                            "Result": texts[3] if len(texts) > 3 else "N/A",
+                            "Total_Winners": texts[4] if len(texts) > 4 else "0",
+                            "Total_Payout": texts[5] if len(texts) > 5 else "$0"
+                        })
                 break
-        
-        if js_data_text:
-            try:
-                print("🧠 Executing embedded JavaScript context to decode spin array...")
-                # Isolate the exact assignment text block cleanly
-                js_context = js_data_text.strip()
-                if "window.__INITIAL_STATE__ =" in js_context:
-                    # Execute the JavaScript string block inside Python to build a matching data object
-                    context = js2py.EvalJs()
-                    context.execute(js_context)
-                    initial_state = context.window.__INITIAL_STATE__.to_dict()
-                    
-                    # Dig through data dictionaries for matching lists recursively
-                    def find_spin_list(obj):
-                        if isinstance(obj, list) and len(obj) > 0 and isinstance(obj[0], dict) and ('result' in obj[0] or 'dealer' in obj[0]):
-                            return obj
-                        if isinstance(obj, dict):
-                            for k, v in obj.items():
-                                res = find_spin_list(v)
-                                if res: return res
-                        return None
-                    
-                    records = find_spin_list(initial_state) or []
-                    
-                    for item in records:
-                        time_val = item.get('time') or item.get('created_at') or item.get('watched_at') or item.get('date') or ''
-                        dealer_val = item.get('dealer_name') or item.get('dealer') or 'Unknown'
-                        mult_val = item.get('multiplier') or item.get('slot_multiplier') or '1x'
-                        res_val = item.get('result') or item.get('wheel_result') or item.get('outcome') or ''
-                        win_val = item.get('total_winners') or item.get('winners') or '0'
-                        pay_val = item.get('total_payout') or item.get('payout') or '$0'
-                        
-                        if time_val and res_val:
-                            spins_data.append({
-                                "Time": str(time_val),
-                                "Dealer": str(dealer_val),
-                                "Multiplier": str(mult_val),
-                                "Result": str(res_val),
-                                "Total_Winners": str(win_val),
-                                "Total_Payout": str(pay_val)
-                            })
-            except Exception as js_err:
-                print(f"⚠️ JavaScript decoder bypass skipped: {js_err}")
 
-        # HTML GRID FALLBACK: Pulls standard HTML table elements if JavaScript state variables shift
+        # 2. DIAGNOSTIC SAFEGUARD: If no data rows can be found, save the raw page into the repository
         if not spins_data:
-            print("🔄 JavaScript variables absent. Running plain table scan...")
-            for table in soup.find_all('table'):
-                table_text = table.text.lower()
-                if "dealer" in table_text or "history" in table_text or "payout" in table_text:
-                    for row in table.find_all('tr')[1:]:
-                        cols = row.find_all(['td', 'th'])
-                        if len(cols) >= 6:
-                            spins_data.append({
-                                "Time": cols[0].text.strip(),
-                                "Dealer": cols[1].text.strip(),
-                                "Multiplier": cols[2].text.strip(),
-                                "Result": cols[3].text.strip(),
-                                "Total_Winners": cols[4].text.strip(),
-                                "Total_Payout": cols[5].text.strip()
-                            })
-                    break
+            print(f"⚠️ No rows parsed. Saving raw cloud source layout to '{debug_file}' for audit...")
+            with open(debug_file, mode="w", encoding="utf-8") as df:
+                df.write(html)
+            
+            # Create a mock entry to force Git to push the debug file updates
+            spins_data.append({
+                "Time": "DIAGNOSTIC_RUN",
+                "Dealer": "CHECK_DEBUG_HTML_FILE",
+                "Multiplier": "N/A",
+                "Result": "NO_DATA_FOUND",
+                "Total_Winners": "0",
+                "Total_Payout": "$0"
+            })
 
-        if not spins_data:
-            print("❌ No matching spin rows could be parsed from the layout structure.")
-            return
-
-        # Deduplication filtering matching logic
+        # Standard file writing and save module
         existing_timestamps = set()
         with open(csv_file, mode="r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
@@ -125,10 +85,8 @@ def scrape_tracksino_table():
             with open(csv_file, mode="a", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=headers_csv)
                 writer.writerows(new_spins)
-            print(f"🎉 Success! Extracted and saved {len(new_spins)} new unique live spins.")
-        else:
-            print("✅ No new spins discovered. Database remains fully up to date.")
-
+            print(f"🎉 Process completed successfully.")
+            
     except Exception as e:
         print(f"❌ Tracking system exception error: {e}")
 
