@@ -2,7 +2,6 @@ name: Continuous CrazyTime Data Sync
 
 on:
   schedule:
-    # This instructs GitHub to run the script automatically every 15 minutes, 24/7
     - cron: '*/15 * * * *'
   workflow_dispatch:
 
@@ -28,6 +27,14 @@ jobs:
       run: |
         git config --global user.name "GitHub Action Bot"
         git config --global user.email "actions@github.com"
-        git add crazytime_master_history.csv
-        git commit -m "Auto-update: Synced latest live spins" || exit 0
-        git push
+        
+        # FIX: Force Git to acknowledge the file even if it is completely brand new
+        git add -A
+        
+        # Check if there are actually changes to commit so it doesn't error out
+        if git diff --staged --quiet; then
+          echo "✅ No new updates to push right now."
+        else
+          git commit -m "Auto-update: Synced latest live spins"
+          git push
+        fi
