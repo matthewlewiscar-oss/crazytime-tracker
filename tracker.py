@@ -48,16 +48,17 @@ def scrape_crazytime_history():
     if file_exists:
         with open(csv_file, mode="r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            # Safely get the ID column used by Tracksino's API
-            id_col = 'id' if 'id' in reader.fieldnames else reader.fieldnames[0]
-            for row in reader:
-                existing_ids.add(row[id_col])
+            if reader.fieldnames and 'id' in reader.fieldnames:
+                for row in reader:
+                    existing_ids.add(str(row['id']))
 
     # Filter out spins we already have stored
     new_spins = [spin for spin in all_spins if str(spin.get('id', '')) not in existing_ids]
     
     if new_spins:
-        headers_csv = all_spins[0].keys()
+        # FIX: Correctly extract keys from the individual spin dictionary inside the list
+        headers_csv = list(all_spins[0].keys())
+        
         # Open in Append mode ("a") to add to the existing file
         with open(csv_file, mode="a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=headers_csv)
