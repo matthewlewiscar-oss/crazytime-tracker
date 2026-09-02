@@ -9,6 +9,7 @@ def scrape_tracksino_table():
     url = "https://www.tracksino.com/crazytime"
     headers_csv = ["Time", "Dealer", "Multiplier", "Result", "Total_Winners", "Total_Payout"]
     
+    # Initialize the tracking file layout explicitly if it is missing or empty
     file_exists = os.path.exists(csv_file) and os.path.getsize(csv_file) > 0
     if not file_exists:
         with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
@@ -32,11 +33,9 @@ def scrape_tracksino_table():
         print("✅ Connected successfully! Finding the Spin History table...")
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # FIX: Find ALL tables and pinpoint the one that actually contains the historical spin records
         target_table = None
         for table in soup.find_all('table'):
             table_text = table.text.lower()
-            # The genuine log table always contains words like "dealer" or "payout" in its header
             if "dealer" in table_text or "history" in table_text or "payout" in table_text:
                 target_table = table
                 break
