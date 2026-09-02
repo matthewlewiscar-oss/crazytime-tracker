@@ -1,15 +1,15 @@
 import os
 import csv
-import re
+import time
 from bs4 import BeautifulSoup
 import requests
 
 def scrape_tracksino_table():
     csv_file = "crazytime_master_history.csv"
-    url = "https://tracksino.com"
+    url = "https://www.tracksino.com/crazytime"
     headers_csv = ["Time", "Dealer", "Multiplier", "Result", "Total_Winners", "Total_Payout"]
     
-    # Force initialize the spreadsheet layout if missing
+    # Initialize the spreadsheet layout file cleanly if missing
     file_exists = os.path.exists(csv_file) and os.path.getsize(csv_file) > 0
     if not file_exists:
         with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
@@ -30,51 +30,39 @@ def scrape_tracksino_table():
             print(f"❌ Connection failed: {response.status_code}")
             return
             
-        print("✅ Connected successfully! Finding data rows...")
+        print("✅ Connected successfully! Parsing visual table rows...")
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # FIX: Find ANY grid container or table containing historical spins
+        # Target the primary table object layout container explicitly
         table = soup.find('table')
         if not table:
-            table = soup.find(class_=re.compile(r"table|history|spin|log", re.IGNORECASE))
-            
-        if not table:
-            print("❌ Could not isolate the display container.")
+            print("❌ Could not isolate the explicit table grid container.")
             return
             
         spins_data = []
+        rows = table.find_all('tr')
         
-        # FIX: Dynamically find table rows or generic grid container elements
-        rows = table.find_all('tr') if table.name == 'table' else table.find_all(class_=re.compile(r"row|item", re.IGNORECASE))
-        
-        for row in rows:
-            cols = row.find_all(['td', 'th']) if table.name == 'table' else row.find_all(recursive=False)
-            if not cols or len(cols) < 4:
+        for row in rows[1:]:  # Skip index 0 (table header words)
+            cols = row.find_all('td')
+            if not cols or len(cols) < 6:
                 continue
                 
-            # Extract safe cell values by filtering array positions dynamically
-            texts = [c.text.strip() for c in cols if c.text.strip() != ""]
-            if len(texts) < 4:
-                continue
-                
+            # Safely map columns by exact table cell position indexes
             row_data = {
-                "Time": texts[0],
-                "Dealer": texts[1] if len(texts) > 1 else "",
-                "Multiplier": texts[2] if len(texts) > 2 else "",
-                "Result": texts[3] if len(texts) > 3 else "",
-                "Total_Winners": texts[4] if len(texts) > 4 else "0",
-                "Total_Payout": texts[5] if len(texts) > 5 else "$0"
+                "Time": cols[0].text.strip(),
+                "Dealer": cols[1].text.strip(),
+                "Multiplier": cols[2].text.strip(),
+                "Result": cols[3].text.strip(),
+                "Total_Winners": cols[4].text.strip(),
+                "Total_Payout": cols[5].text.strip()
             }
-            # Skip the table header if it got caught by filtering keywords
-            if row_data["Time"].lower() in ["time", "date", "timestamp"]:
-                continue
-                
             spins_data.append(row_data)
 
         if not spins_data:
             print("❌ No text rows were harvested inside the table object.")
             return
 
+        # Read existing timestamps to block duplicate entries
         existing_timestamps = set()
         with open(csv_file, mode="r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
